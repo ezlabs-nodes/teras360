@@ -1,0 +1,173 @@
+# PRD: Sinkronisasi Foto Profil 2-Arah (Dashboard-K3 ↔ HRIS ↔ SUMMIT SSO)
+
+**Dokumen:** Product Requirements Document (PRD)  
+**Ekosistem:** TERAS360 (`dashboard-k3`, `hris`, `sso`)  
+**Target Release:** Hotfix Sync v1.0  
+**Status:** Menunggu Persetujuan User
+
+---
+
+## 1. Ringkasan Masalah & Audit Teknis
+
+Pada halaman **Pengaturan Profil & Akun** di modul HRIS (`pages/settings/index.php`) serta beberapa akun di Topbar/Sidebar, foto profil tidak muncul (hanya tampil inisial) atau menampilkan foto yang berbeda dengan yang ada di **Dashboard K3** (`modules/user/profile.php`).
+
+Hasil audit langsung pada database (`terasmyi_sso`, `terasmyi_dashboard_k3`, `terasmyi_hris`) dan direktori upload menemukan **5 akar masalah teknis**:
+
+### 1.1 `TerasSSO::resolveHrisPhotoUrl()` Tidak Memeriksa Folder `uploads/foto_karyawan/` & `uploads/foto_profil/`
+Di `sso/TerasSSO.php` (baris 1047–1087), fungsi `resolveHrisPhotoUrl($hrisPhotoUrl, $localFoto)` hanya mencari `$hrisPhotoUrl` di:
+- `hris/{rel}`
+- `hris/uploads/{rel}`
+- `hris/uploads/foto/{rel}`
+- `hris/uploads/employees/{rel}`
+
+Padahal seluruh 36 file foto karyawan dari tabel `terasmyi_hris.karyawan_baru.photo_url` (contoh: `33018652_1776933383.jpg`, `33018557_1776933522.jpg`) tersimpan secara fisik di **`hris/uploads/foto_karyawan/`**, dan foto profil kustom HRIS tersimpan di **`hris/uploads/foto_profil/`**. Akibatnya, lookup `resolveHrisPhotoUrl()` mengembalikan `null`.
+
+### 1.2 Query `hris/pages/settings/index.php` Tidak Mengambil Foto dari `dashboard_k3.users` & `hris.users`
+Query profil di `hris/pages/settings/index.php` (baris 30–39) hanya mengambil `su.foto_profil` (`terasmyi_sso.sso_users`) dan `k.photo_url` (`karyawan_baru`), tanpa `LEFT JOIN` ke `terasmyi_dashboard_k3.users` (`ku.foto_profil`) maupun `terasmyi_hris.users` (`hu.foto_profil`).
+
+Contoh kondisi aktual pada database saat audit:
+| `id_user` | `username` | `sso_users.foto_profil` | `dashboard_k3.users.foto_profil` | `hris.users.foto_profil` | `karyawan_baru.photo_url` |
+|---|---|---|---|---|---|
+| `2` | `wiryadisulasmana` | `33018557_1776933522.jpg` | `user_2_1776169559.jpg` | `user_2_1776169559.jpg` | `33018557_1776933522.jpg` |
+| `12` | `sutarnawiguna` | `33018652_1776933383.jpg` | `user_12_1776142536.jpg` | `user_12_1776142536.jpg` | `33018652_1776933383.jpg` |
+| `17` | `fachrulyusrinullah7@gmail.com` | `user_17_1776142513.jpg` | `user_17_1776142513.jpg` | `NULL` | `33019541_1776932509.jpg` |
+| `29` | *(file di disk K3)* | `NULL` | `user_29_1784936857.jpg` *(di disk)* | *(tidak ada di disk HRIS)* | — |
+
+Karena `sso_users.foto_profil` tertimpa oleh `karyawan_baru.photo_url` (`33018652_1776933383.jpg`), lalu `resolveHrisPhotoUrl()` mencari `33018652_1776933383.jpg` di folder yang salah dan mencari `localFoto` di `dashboard-k3/uploads/foto_profil/` (yang tidak berisi file tersebut), hasil akhirnya **`null` (hanya muncul inisial)** di halaman Pengaturan Profil HRIS.
+
+### 1.3 `currentUserProfile()` di HRIS (`includes/helpers.php`) Tidak Mengakses `sso_users` & `dashboard_k3.users`
+Fungsi `currentUserProfile()` di `hris/includes/helpers.php` (baris 140–185) hanya membaca `terasmyi_hris.users` dan `karyawan_baru`. Akibatnya:
+- Jika user mengganti foto profil lewat halaman `hris/pages/settings/index.php` atau `dashboard-k3/modules/user/profile.php`, kolom `terasmyi_hris.users.foto_profil` tidak ikut ter-update.
+- Jika `karyawan_baru.photo_url` masih bernilai lama (atau `NULL` seperti untuk akun tanpa `id_karyawan`), topbar/sidebar HRIS tetap menampilkan foto lama atau tidak mendeteksi foto yang baru diunggah di K3.
+
+### 1.4 Upload/Hapus Foto Hanya Menyimpan di Satu Direktori Modul
+- **`dashboard-k3/modules/user/profile.php`**: Menyimpan file fisik hanya ke `dashboard-k3/uploads/foto_profil/` dan meng-update `dashboard_k3.users` + `sso_users`, tetapi tidak menyalin file ke `hris/uploads/foto_profil/` dan tidak meng-update `terasmyi_hris.users`.
+- **`hris/pages/settings/index.php`**: Menyimpan file fisik hanya ke `hris/uploads/foto_profil/` dan meng-update `sso_users` + `dashboard_k3.users`, tetapi tidak menyalin file ke `dashboard-k3/uploads/foto_profil/` dan tidak meng-update `terasmyi_hris.users`.
+
+### 1.5 `TerasSSO::syncUserFromHris()` Menimpa Foto Profil Kustom User
+Pada `sso/TerasSSO.php` baris 1135:
+```sql
+foto_profil = COALESCE(NULLIF(?,''), foto_profil)
+```
+Setiap kali `syncUserFromHris()` dijalankan, `karyawan_baru.photo_url` menimpa `sso_users.foto_profil` meskipun user sudah mengunggah foto profil kustom (`user_{id}_{ts}.jpg`) di Dashboard K3 atau HRIS.
+
+---
+
+## 2. Tujuan & Sasaran (Goals)
+
+1. **Single Source Resolver**: Dashboard K3, HRIS (Topbar, Sidebar, dan Pengaturan Profil & Akun), serta SUMMIT SSO menggunakan resolver terpadu yang mampu menemukan file foto di semua direktori sah (`dashboard-k3/uploads/foto_profil/`, `hris/uploads/foto_profil/`, `hris/uploads/foto_karyawan/`).
+2. **True Two-Way Photo Sync**: Mengunggah atau menghapus foto profil di **HRIS** maupun di **Dashboard K3** otomatis menyinkronkan file fisik ke kedua direktori dan memperbarui seluruh tabel terkait (`terasmyi_sso.sso_users`, `terasmyi_dashboard_k3.users`, `terasmyi_hris.users`, dan opsional `$_SESSION`).
+3. **Prioritas Foto yang Konsisten & Intuitif**:
+   - Foto profil kustom yang diunggah user (`user_{id}_{timestamp}.*` di `foto_profil/`) **dipertahankan** dan tidak tertimpa oleh `syncUserFromHris()`.
+   - Jika user tidak memiliki foto profil kustom, sistem otomatis menampilkan foto resmi karyawan dari `hris/uploads/foto_karyawan/` (`karyawan_baru.photo_url`).
+   - Jika foto karyawan pada data master (`karyawan_baru.photo_url`) lebih baru daripada foto profil kustom (berdasarkan timestamp atau perubahan admin HR), atau jika user menghapus foto kustom, fallback langsung ke `karyawan_baru.photo_url`.
+4. **Collation-Safe Cross-DB Queries**: Semua query lintas database antara `terasmyi_sso` dan `terasmyi_hris` wajib aman terhadap perbedaan collation (`utf8mb4_0900_ai_ci` vs `utf8mb4_unicode_ci`) dengan join berbasis `id_user` / `id_karyawan` atau `COLLATE utf8mb4_unicode_ci`.
+
+---
+
+## 3. Arsitektur Solusi Teknis
+
+### 3.1 Upgrade `TerasSSO::resolveHrisPhotoUrl()` di `sso/TerasSSO.php`
+
+Memperluas tanda tangan fungsi dengan parameter opsional ketiga agar kompatibel penuh (backward compatible):
+
+```php
+public static function resolveHrisPhotoUrl(?string $hrisPhotoUrl, ?string $localFoto = null, ?string $k3Foto = null): ?string
+```
+
+**Aturan Resolusi & Prioritas:**
+1. **Kumpulkan kandidat foto profil kustom** (`$k3Foto` dan `$localFoto`, jika berupa `http(s)://` langsung return).
+2. Untuk masing-masing nama file profil kustom, cek secara berurutan di:
+   - `dashboard-k3/uploads/foto_profil/{basename}` → `$k3Base . '/uploads/foto_profil/' . rawurlencode($bn) . '?v=' . filemtime(...)`
+   - `hris/uploads/foto_profil/{basename}` → `$hrisBase . '/uploads/foto_profil/' . rawurlencode($bn) . '?v=' . filemtime(...)`
+   - `hris/uploads/foto_karyawan/{basename}` → `$hrisBase . '/uploads/foto_karyawan/' . rawurlencode($bn) . '?v=' . filemtime(...)`
+3. **Fallback / Foto Master HRIS (`$hrisPhotoUrl`)**:
+   - Jika `$hrisPhotoUrl` bernilai `http(s)://`, return langsung.
+   - Jika relatif, cek berurutan di:
+     1. `hris/{rel}`
+     2. `hris/uploads/foto_karyawan/{basename}` *(tambahan utama yang sebelumnya hilang!)*
+     3. `hris/uploads/foto_profil/{basename}` *(tambahan!)*
+     4. `hris/uploads/{rel}`
+     5. `hris/uploads/foto/{rel}`
+     6. `hris/uploads/employees/{rel}`
+     7. `dashboard-k3/uploads/foto_profil/{basename}`
+4. **Kebijakan Prioritas Kustom vs Master**:
+   - Tambahkan helper opsional atau logika di `resolveHrisPhotoUrl()`: jika tersedia foto profil kustom (`user_*` di `foto_profil/`) yang valid di disk, tampilkan foto kustom agar perubahan di halaman Pengaturan Profil langsung terlihat di seluruh modul; jika tidak ada atau dihapus, otomatis pakai `$hrisPhotoUrl` dari `hris/uploads/foto_karyawan/`.
+   - Di halaman Pengaturan Profil (`hris/pages/settings/index.php` & `dashboard-k3/modules/user/profile.php`), tambahkan tombol/opsi *"Gunakan Foto Data Karyawan HRIS"* apabila user memiliki kedua foto agar user dapat memilih/mereset ke foto ID card HRIS kapan saja.
+
+### 3.2 Perbaikan `TerasSSO::syncUserFromHris()` di `sso/TerasSSO.php`
+
+Agar `syncUserFromHris()` tidak menimpa foto profil kustom (`user_{id}_...`) dengan `karyawan_baru.photo_url`:
+- Hanya isi `sso_users.foto_profil` dari `karyawan_baru.photo_url` apabila `sso_users.foto_profil` saat ini `NULL`/kosong **atau** bukan foto kustom hasil upload (`foto_profil NOT LIKE 'user_%'`).
+- Jika `dashboard_k3.users.foto_profil` sudah terisi `user_%` yang masih ada di disk sementara `sso_users.foto_profil` kosong/berbeda, pertahankan foto kustom tersebut.
+
+### 3.3 Sinkronisasi Terpadu di HRIS (`includes/helpers.php` & `pages/settings/index.php`)
+
+1. **`hris/includes/helpers.php` (`currentUserProfile()` & `photoUrl()`):**
+   - `photoUrl(?string $photo, string $folder = 'karyawan')`: jika `$folder === 'profil'` dan file tidak ditemukan di `hris/uploads/foto_profil/`, otomatis cek ke `hris/uploads/foto_karyawan/` dan `../dashboard-k3/uploads/foto_profil/` (atau panggil `TerasSSO::resolveHrisPhotoUrl()`).
+   - `currentUserProfile()`:
+     - Muat `sso/TerasSSO.php` jika tersedia.
+     - Query mengambil `u.foto_profil AS hris_user_foto`, `k.photo_url AS hris_emp_photo`, `su.foto_profil AS sso_foto`, dan `ku.foto_profil AS k3_foto` (join berdasarkan `id_user` / `id_karyawan` dalam blok `try/catch` yang aman jika tabel lintas-DB tidak ada).
+     - Resolusi `'photo'` memanggil `TerasSSO::resolveHrisPhotoUrl($hrisEmpPhoto, $ssoFoto ?: $hrisUserFoto, $k3Foto)`.
+     - Ini menjamin foto di **Topbar**, **Sidebar**, dan **Pengaturan Profil & Akun** HRIS 100% seragam dengan **Dashboard K3**.
+
+2. **`hris/pages/settings/index.php`:**
+   - Query `LEFT JOIN terasmyi_dashboard_k3.users ku ON ku.id_user = su.id_user` dan `LEFT JOIN terasmyi_hris.users hu ON hu.id_karyawan = su.id_karyawan` (atau fallback `hu.username COLLATE utf8mb4_unicode_ci = su.username COLLATE utf8mb4_unicode_ci`).
+   - Resolusi `$foto_url = TerasSSO::resolveHrisPhotoUrl($hris_photo, $foto_profil, $k3_foto);`.
+   - Handler **Upload Foto (`upload_photo`)**:
+     - Simpan file baru (`user_{$user_id}_{time}.{ext}`) ke `hris/uploads/foto_profil/`.
+     - Salin (`@copy`) file yang sama ke `dashboard-k3/uploads/foto_profil/` dan bersihkan file foto kustom lama (`user_*`) di kedua folder.
+     - Update database secara serentak:
+       - `terasmyi_sso.sso_users.foto_profil = ?`
+       - `terasmyi_dashboard_k3.users.foto_profil = ?`
+       - `terasmyi_hris.users.foto_profil = ?`
+     - Perbarui `$_SESSION['foto_profil']` & `$_SESSION['hris_foto']` serta tampilkan preview instan dengan cache-buster `?t=time()`.
+   - Handler **Hapus Foto (`delete_photo`)** & **Gunakan Foto HRIS**:
+     - Hapus file kustom (`user_*`) di kedua folder (`hris/uploads/foto_profil/` & `dashboard-k3/uploads/foto_profil/`). **Jangan** menghapus file di `hris/uploads/foto_karyawan/`.
+     - Set `NULL` pada `dashboard_k3.users.foto_profil`, `terasmyi_hris.users.foto_profil`, dan kembalikan `sso_users.foto_profil` ke `$hris_photo` (atau `NULL` jika kosong).
+
+### 3.4 Sinkronisasi Terpadu di Dashboard K3 (`dashboard-k3/modules/user/profile.php`) & Header K3
+
+1. Pastikan `dashboard-k3/modules/user/profile.php` memanggil `TerasSSO::resolveHrisPhotoUrl($hris_photo, $sso_foto, $foto_profil)` sehingga foto di K3 dan HRIS memakai urutan prioritas yang persis sama.
+2. Pada handler **`upload_photo`** di `dashboard-k3/modules/user/profile.php`:
+   - Selain menyimpan di `dashboard-k3/uploads/foto_profil/`, otomatis salin (`@copy`) file ke `hris/uploads/foto_profil/` dan hapus file lama di kedua folder.
+   - Selain update `dashboard_k3.users` & `sso_users`, juga update `terasmyi_hris.users.foto_profil` (dengan collation-safe / `id_karyawan` match).
+3. Pada handler **`delete_photo`**:
+   - Hapus file kustom di kedua folder dan reset kolom `foto_profil` di `dashboard_k3.users`, `terasmyi_hris.users`, serta kembalikan `sso_users.foto_profil` ke `hris_photo` (atau `NULL`).
+4. Cek juga header/sidebar `dashboard-k3` bila ada pemanggilan avatar user aktif agar menggunakan `TerasSSO::resolveHrisPhotoUrl()` secara seragam.
+
+### 3.5 Skrip Migrasi & Rekonsiliasi Foto Eksisting (`hris/migrations/sync_profile_photos_k3_hris.php`)
+
+Skrip CLI idempoten untuk menyelaraskan seluruh data dan file foto yang sudah terlanjur tidak sinkron saat ini:
+1. Salin seluruh file dari `dashboard-k3/uploads/foto_profil/` ke `hris/uploads/foto_profil/` jika belum ada (mis. `user_29_1784936857.jpg`), dan sebaliknya dari `hris/uploads/foto_profil/` ke `dashboard-k3/uploads/foto_profil/`.
+2. Untuk setiap baris di `terasmyi_sso.sso_users`:
+   - Jika `dashboard_k3.users.foto_profil` memiliki file `user_%` yang valid di disk: sinkronkan nilai tersebut ke `sso_users.foto_profil` dan `terasmyi_hris.users.foto_profil`.
+   - Jika belum punya foto profil kustom tetapi `karyawan_baru.photo_url` ada dan file-nya valid di `hris/uploads/foto_karyawan/`: pastikan `sso_users.foto_profil` terisi nilai `photo_url` tersebut.
+3. Cetak ringkasan jumlah file disalin dan user tersinkron.
+
+---
+
+## 4. Lingkup File yang Akan Dimodifikasi / Dibuat
+
+| No | File Target | Jenis Perubahan |
+|---|---|---|
+| 1 | `C:\laragon\www\teras360\sso\TerasSSO.php` | Perbaiki `resolveHrisPhotoUrl()` (+ folder `foto_karyawan`, `foto_profil`, prioritas kustom vs master) & `syncUserFromHris()` (proteksi foto `user_*`). |
+| 2 | `C:\laragon\www\teras360\hris\includes\helpers.php` | Perbaiki `currentUserProfile()` & `photoUrl()` agar join multi-sumber dan memakai `TerasSSO::resolveHrisPhotoUrl()`. |
+| 3 | `C:\laragon\www\teras360\hris\pages\settings\index.php` | Join `dashboard_k3.users` & `hris.users`, sinkronisasi copy/delete fisik 2-arah + DB update serentak, dan tombol reset ke foto HRIS. |
+| 4 | `C:\laragon\www\teras360\dashboard-k3\modules\user\profile.php` | Sinkronisasi copy/delete fisik ke `hris/uploads/foto_profil/` + update `terasmyi_hris.users` saat upload/delete foto, serta samakan resolver. |
+| 5 | `C:\laragon\www\teras360\hris\migrations\sync_profile_photos_k3_hris.php` | Skrip rekonsiliasi 1x untuk menyamakan file fisik dan kolom DB yang sudah ada. |
+
+*(Catatan: Untuk file di `dashboard-k3`, hanya menyentuh logika sinkronisasi foto pada `modules/user/profile.php` dan/atau layout avatar jika diperlukan agar tidak bentrok dengan pekerjaan workspace K3.)*
+
+---
+
+## 5. Rencana Verifikasi & Uji Coba
+
+1. **Syntax & Static Check:** `php -l` pada seluruh file yang diubah.
+2. **CLI Unit Verification (`TerasSSO::resolveHrisPhotoUrl`):**
+   - Uji `id_user=2` (`wiryadisulasmana`), `id_user=12` (`sutarnawiguna`), `id_user=17` (`fachrul`), dan user hanya-K3 (`id_user=14`, `id_user=29`) — pastikan semua menghasilkan URL foto HTTP valid dan file fisiknya terbaca dengan status `200 OK`.
+3. **Runtime HTTP Test:**
+   - Uji akses ke `http://hris.localhost/pages/settings/index.php` dan `http://k3.localhost/modules/user/profile.php` — verifikasi tag `<img>` pada avatar profil & topbar menampilkan URL foto yang sama dan gambar dapat dimuat (tidak broken/404).
+4. **End-to-End Upload & Delete Test:**
+   - Upload foto simulasi di salah satu modul → verifikasi file terbuat di kedua direktori (`dashboard-k3/uploads/foto_profil/` dan `hris/uploads/foto_profil/`) serta `sso_users`, `dashboard_k3.users`, `hris.users` ter-update serentak.
+   - Hapus foto kustom → verifikasi fallback kembali ke foto karyawan di `hris/uploads/foto_karyawan/` (atau inisial jika tidak ada foto karyawan).
