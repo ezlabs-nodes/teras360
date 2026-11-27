@@ -1,0 +1,124 @@
+# PRD: Pembaruan Modul Blacklist & Modul Baru MCU Management (HR Connect v3.60)
+
+**Dokumen:** Product Requirements Document (PRD)  
+**Target Modul:**
+1. **Blacklist Karyawan (`modules/employees/blacklist.php` / `pages/personalia/blacklist.php`)** — Redesign ke tema Kolabo Teal UI v3.60
+2. **MCU Management (`pages/mcu/index.php` & `api/mcu/records.php`)** — Modul baru di dalam menu sidebar **Employee Management**
+
+**Basis Data:** `terasmyi_hris.karyawan_baru` (`906` karyawan TTP; `146` dengan `mcu_date`, `147` dengan `mcu_expired_date`), `blacklist_karyawan`, dan tabel baru `hris_mcu_records`  
+**Status:** Menunggu Persetujuan User
+
+---
+
+## 1. Bagian A — Pembaruan Modul Blacklist Karyawan (Tema Kolabo Teal UI)
+
+### 1.1 Masalah Saat Ini
+Halaman `modules/employees/blacklist.php` saat ini masih memakai template standalone Bootstrap 5 berwarna hitam-merah tanpa sidebar/topbar HR Connect, tanpa dukungan Dark Mode, dan input NIK masih manual tanpa auto-lookup ke bank data `karyawan_baru`.
+
+### 1.2 Desain & Fitur Baru (Selaras Tema HR Connect v3.60)
+- **Shell Terpadu HR Connect:** Memakai `includes/bootstrap.php`, `layout/header.php`, `layout/sidebar.php`, dan `layout/footer.php` dengan palet warna **Kolabo Teal (`#0D9488`) + Slate**, konsisten dengan halaman Personalia, Calendar, dan Absensi.
+- **Header & Statistik Ringkas:**
+  - Total NIK Blacklist, Kategori Pelanggaran HSE/Disiplin, Penambahan Bulan Ini, dan tombol kembali cepat ke **Direktori Karyawan (`pages/personalia/index.php`)**.
+- **Panel Kiri — Form Tambah ke Blacklist (`+ Tambah ke Blacklist`):**
+  - **Auto-Lookup Karyawan TTP:** Ketik NIK atau pilih dari dropdown pencarian cepat `karyawan_baru` → otomatis mengisi Nama Karyawan, Jabatan, dan Proyek terakhir. (Tetap bisa input manual jika mantan/kandidat eksternal belum ada di tabel).
+  - **Kategori Alasan & Keterangan Detail:** Pilihan cepat kategori (*Pelanggaran HSE/K3*, *Tindakan Disiplin Berat / PHK*, *Fraud / Pencurian*, *Pemalsuan Dokumen*, *Lainnya*) + catatan lengkap alasan.
+  - **Opsi Otomatis Blokir Status Karyawan:** Centang otomatis untuk menonaktifkan `status_aktif = 0`, `employee_active = 'Non Active'`, serta mengisi `keterangan_demob` pada `karyawan_baru` jika NIK terdaftar sebagai karyawan TTP.
+- **Panel Kanan — Tabel Daftar Blacklist Interaktif:**
+  - Pencarian real-time (NIK, Nama, Alasan, Pencatat), Badge Kategori Pelanggaran, Info Proyek Terakhir (jika cocok dengan `karyawan_baru`), tanggal pencatatan, dan tombol aksi **Detail Kasus** & **Pulihkan / Hapus dari Blacklist (Unblacklist)** berproteksi CSRF & RBAC (`superadmin` / `hrd`).
+
+---
+
+## 2. Bagian B — Modul Baru: `MCU Management` (Menu `Employee Management`)
+
+### 2.1 Navigasi Sidebar (`layout/sidebar.php`)
+Di dalam grup **Employee & Company → Employee Management** (setelah *Status Kerja & Probation*):
+- Menambahkan item menu **`MCU Management`** (`pages/mcu/index.php`) lengkap dengan **badge merah dinamis** yang menampilkan total karyawan dengan status **MCU Expired + MCU ≤ 30 Hari**.
+
+### 2.2 Arsitektur Database Baru (`hris_mcu_records`)
+Agar perusahaan dapat menyimpan **riwayat seluruh MCU tiap karyawan TTP dari tahun ke tahun** serta melampirkan file hasil pemeriksaan dan membandingkan **MCU Lama vs MCU Baru**, dibuat tabel baru pada `terasmyi_hris`:
+
+```sql
+CREATE TABLE IF NOT EXISTS hris_mcu_records (
+    id_mcu INT AUTO_INCREMENT PRIMARY KEY,
+    id_karyawan INT NOT NULL,
+    id_proyek INT NULL,
+    mcu_date DATE NOT NULL,
+    mcu_expired_date DATE NOT NULL,
+    mcu_type ENUM('Pre-Employment','Annual / Berkala','Special / Follow-Up','Exit MCU') NOT NULL DEFAULT 'Annual / Berkala',
+    provider_clinic VARCHAR(150) NULL,
+    doctor_name VARCHAR(120) NULL,
+    fit_status ENUM('Fit to Work','Fit with Note','Temporary Unfit','Unfit') NOT NULL DEFAULT 'Fit to Work',
+    blood_pressure VARCHAR(30) NULL,
+    bmi DECIMAL(5,2) NULL,
+    hemoglobin VARCHAR(30) NULL,
+    cholesterol VARCHAR(30) NULL,
+    blood_sugar VARCHAR(30) NULL,
+    audiometry VARCHAR(100) NULL,
+    spirometry VARCHAR(100) NULL,
+    xray_ekg VARCHAR(150) NULL,
+    medical_notes TEXT NULL,
+    recommendations TEXT NULL,
+    attachment_file VARCHAR(255) NULL,
+    created_by VARCHAR(100) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_mcu_emp (id_karyawan, mcu_date DESC),
+    INDEX idx_mcu_exp (mcu_expired_date),
+    INDEX idx_mcu_proyek (id_proyek)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**Integrasi & Migrasi Otomatis:**
+1. **Baseline Initial Seeding (`migrate_mcu_records.php`):** Mengimpor seluruh `147` data MCU yang sudah ada di `karyawan_baru` (`mcu_date`, `mcu_expired_date`, `medical_information`) ke `hris_mcu_records` agar riwayat awal tidak hilang dan siap dibandingkan saat MCU terbaru diinput.
+2. **Auto-Sync ke `karyawan_baru`:** Setiap kali record MCU terbaru ditambahkan atau diubah di `MCU Management`, sistem otomatis memperbarui `karyawan_baru.mcu_date`, `karyawan_baru.mcu_expired_date`, dan `karyawan_baru.medical_information` agar seluruh dashboard, badge sidebar, dan Kartu Profil Karyawan di Personalia tetap sinkron.
+3. **Penyimpanan Lampiran Aman:** File hasil MCU (PDF, JPG, PNG, WEBP, maks. 5MB) disimpan di `C:\laragon\www\teras360\hris\uploads\mcu\` dengan penamaan unik `mcu_{id_karyawan}_{timestamp}_{rand}.{ext}`.
+
+### 2.3 Fitur Utama `MCU Management` (`pages/mcu/index.php`)
+Halaman terproteksi **3-Tier Multi-Project RBAC (`hrisGetScope()` / `hrisProjectWhere('k')`)** untuk memantau seluruh **906 karyawan PT. Teras Teknik Perdana** di 9 proyek:
+
+1. **Summary Kepatuhan MCU Perusahaan (5 Kartu Statistik):**
+   - **Total Karyawan (Scope):** `906` (atau sesuai proyek aktif)
+   - **MCU Valid (> 30 Hari)**
+   - **Segera Habis (≤ 30 Hari)**
+   - **MCU Expired**
+   - **Belum Pernah Input MCU**
+2. **Direktori & Filter Multi-Proyek Semua Karyawan TTP:**
+   - Filter berdasarkan **Cari (Nama/NIP/NIK)**, **Proyek (9 Proyek)**, **Divisi**, **Status Masa Berlaku MCU** (`Semua`, `Valid`, `≤ 30 Hari`, `Expired`, `Belum Ada MCU`), dan **Status Kelaikan (`Fit Status`)**.
+   - Setiap baris karyawan menampilkan: Identitas & Proyek, Tanggal MCU Terakhir, Tanggal Expired & Countdown Hari, Status Fit (`Fit to Work` / `Fit with Note` / `Temporary Unfit` / `Unfit`), Jumlah Riwayat MCU (mis. `2 Record` / `1 Record`), Lampiran File PDF/Gambar MCU Terbaru, dan 3 Tombol Aksi:
+     - **+ Input MCU Baru** (upload lampiran file hasil MCU + parameter medis)
+     - **Bandingkan (Lama vs Baru)** *(aktif bila karyawan memiliki ≥ 2 record MCU, atau menampilkan perbandingan Baseline vs Tambah MCU Baru)*
+     - **Riwayat & File** (melihat seluruh timeline MCU karyawan dari waktu ke waktu + unduh/pratinjau lampiran)
+3. **Modal Perbandingan MCU Lama vs MCU Baru (`#compare-modal`):**
+   - Memungkinkan HR/HSE/Manajemen memilih **Record MCU Pembanding (MCU Lama)** dan **Record MCU Terbaru (MCU Baru)** dari dropdown tanggal pemeriksaan (default otomatis: Record ke-2 terbaru vs Record terbaru).
+   - Menampilkan **Panel Perbandingan Berdampingan (Side-by-Side)**:
+     - **Header Ringkas Perubahan Status:** Contoh `Fit with Note → Fit to Work (Membaik)` atau `Fit to Work → Temporary Unfit (Perlu Tindak Lanjut)`.
+     - **Tabel Matriks Parameter Klinis + Indikator Delta:**
+       - Tanggal Pemeriksaan, Klinik/Provider, Dokter Pemeriksa
+       - Tekanan Darah (`blood_pressure`), BMI (`bmi` dengan selisih angka `+/-`), Hemoglobin (`hemoglobin`), Kolesterol (`cholesterol`), Gula Darah (`blood_sugar`), Audiometri, Spirometri, X-Ray / EKG.
+       - Catatan Dokter (`medical_notes`) & Rekomendasi (`recommendations`) Lama vs Baru.
+     - **Komparasi Lampiran File MCU Lama vs MCU Baru:** Preview PDF/Gambar inline (atau tombol buka/unduh tab baru) berdampingan untuk dokumen MCU Lama dan dokumen MCU Baru.
+4. **Export Laporan MCU:**
+   - Tombol Export CSV/Excel Rekap MCU semua karyawan TTP sesuai filter proyek & status saat ini untuk kebutuhan pelaporan ke klien / HSE.
+
+---
+
+## 3. Rencana Implementasi (Daftar File)
+
+| No | File Target | Peran Perubahan |
+|---|---|---|
+| 1 | `C:\laragon\www\teras360\hris\migrations\migrate_mcu_records.php` *(Baru)* | Membuat tabel `hris_mcu_records` & auto-seed data MCU eksisting dari `karyawan_baru`. |
+| 2 | `C:\laragon\www\teras360\hris\api\mcu\records.php` *(Baru)* | REST API untuk list status MCU 906 karyawan, detail riwayat MCU per karyawan, upload lampiran PDF/Image + tambah/edit record MCU, hapus record, dan payload data perbandingan MCU Lama vs MCU Baru. |
+| 3 | `C:\laragon\www\teras360\hris\pages\mcu\index.php` *(Baru)* | UI lengkap **MCU Management** (Kolabo Teal UI): Ringkasan 5 metrik, Filter multi-proyek, Tabel karyawan TTP + preview lampiran, Modal Input/Upload Hasil MCU, Modal Timeline Riwayat, dan Modal Perbandingan **MCU Lama vs MCU Baru** side-by-side. |
+| 4 | `C:\laragon\www\teras360\hris\modules\employees\blacklist.php` *(Upgrade Penuh)* | Redesign 100% ke tema Kolabo Teal UI v3.60 (header/sidebar/footer), Auto-Lookup karyawan dari `karyawan_baru`, kategori pelanggaran, & sinkron blokir karyawan. |
+| 5 | `C:\laragon\www\teras360\hris\layout\sidebar.php` & `C:\laragon\www\teras360\hris\layout\header.php` | Menambahkan submenu **`MCU Management`** di grup *Employee Management* + Quick Navigation (`Ctrl+K`). |
+
+---
+
+## 4. Rencana Verifikasi
+
+1. **Syntax & Migrasi DB:** Jalankan `migrate_mcu_records.php` dan `php -l` pada seluruh file baru/diubah; pastikan `147` data MCU eksisting termigrasi ke `hris_mcu_records` tanpa duplikasi.
+2. **End-to-End Test Modul Blacklist:**
+   - Uji `http://hris.localhost/modules/employees/blacklist.php` (`HTTP 200 OK`), auto-lookup karyawan, tambah & hapus data blacklist uji.
+3. **End-to-End Test Modul MCU Management:**
+   - Uji `http://hris.localhost/pages/mcu/index.php` (`HTTP 200 OK`).
+   - Uji tambah MCU lama + MCU baru beserta simulasi lampiran file PDF/PNG melalui `api/mcu/records.php`, verifikasi kedua record tampil di modal perbandingan (`Lama vs Baru`), serta verifikasi `karyawan_baru.mcu_expired_date` ter-update otomatis (lalu bersihkan data uji).
