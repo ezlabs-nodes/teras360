@@ -1,0 +1,228 @@
+# Product Requirements Document (PRD)
+## Modernisasi Modul Incident & Risk Management — Event Notification, Investigasi Terstruktur & Public Incident Report (TERAS360 HSE)
+
+| Metadata | Detail |
+| :--- | :--- |
+| **Versi Dokumen** | v2.0 (Comprehensive Migration & Redesign) |
+| **Modul Target** | `modules/event-notification/` & `modules/risk-assesment/` |
+| **Standar Acuan UI** | TERAS360 HSE Management System (Monochrome Enterprise — selaras dengan `Hazard Report`, `KPI Dashboard`, & `Environment Management`) |
+| **Standar Kepatuhan** | ISO 45001:2018, SMK3 PP No. 50/2012, Permenaker No. 03/1998, Bird & Germain's Loss Causation Model (Efek Domino), ICAM |
+| **Target Pengguna** | Pekerja/Publik (QR), Safety Officer/Safetyman, Supervisor, Site/Project Manager, Ahli K3/Investigator, HSE Manager, Corporate HSE |
+
+---
+
+## 1. Latar Belakang & Tujuan
+
+Modul **Incident & Risk Management** (`Event Notifications` dan `Risk Management`) saat ini masih menggunakan antarmuka lama yang belum seragam dengan desain terbaru **HSE Management System (TERAS360)**, alur komunikasi belum berjalan end-to-end, belum memiliki form pelaporan publik (QR), serta belum memandu tim lapangan melalui protokol investigasi komprehensif (pengamanan korban & TKP, pembentukan tim investigasi, metode analisis akar masalah multi-pendekatan, model Efek Domino, dan penanganan pihak eksternal).
+
+### Tujuan Utama
+1. **Migrasi UI/UX Total** ke sistem desain terbaru TERAS360 (clean monochrome, responsif desktop/tablet/mobile, interaktif).
+2. **Standarisasi Tabel Event Notification** agar setara dengan `Hazard Report` — lengkap dengan *View Selector*, *Quick Filter*, *Add/Remove Columns*, *Advanced View*, dan penomoran **`IN-XXXXXX`**.
+3. **Form Input, Edit & Save to PDF** yang modern, terstruktur, dan siap cetak untuk kebutuhan audit maupun manajemen.
+4. **Public Incident Report Form (QR Code)** tanpa login (selaras dengan `/modules/hazard/input`) untuk mempercepat pelaporan awal dari lapangan.
+5. **Perbaikan Total Alur Komunikasi & Eskalasi** (`api/komunikasi.php` + Notification Center) berdasarkan **Incident Level Matrix**.
+6. **Digitalisasi Penuh 5 Tahap Investigasi & Efek Domino (*Loss Causation Model*)** beserta 6 metodologi analisis akar masalah (*Fishbone, 5-Why, ICAM, Gap Analysis, FTA, CAPA*) dan protokol **Prosedur Pelaporan Incident**.
+
+---
+
+## 2. Arsitektur & Standar Tampilan (UI/UX Migration)
+
+### 2.1 Event Notification List (`/modules/event-notification/`)
+Mengadopsi 100% pola desain tabel bersih dari `modules/hazard/index.php` dan referensi tampilan *Event Notification*:
+
+- **Top Action & Filter Bar (1 Baris Responsif):**
+  - **View Selector Dropdown:** `All Events (N)`, `My Open Event Notification`, `My Events`, `Open Events`, `In Investigation`, `Closed Events`, `HIPO / Critical (L4–L5)`, `Vital Behaviour / Golden Rules`.
+  - **Quick Filter:** Pencarian real-time (Event Number, Title, Area, Location, Reported By).
+  - **Tombol `+ New`:** Membuka form input Event Notification baru.
+  - **Menu Pengaturan (`🔧` Wrench Dropdown):**
+    - `Add/Remove Columns` (Modal *Selected Fields* & *Available Fields* — persis seperti referensi).
+    - `Sort Multiple Columns`
+    - `Advanced Filter` (Filter by Category, Incident Level 1–5, Status, Date Range, Area/Proyek).
+    - `Advanced View & Body Map` (Visualisasi analitik tren insiden, peta cedera tubuh, dan matriks level).
+    - `Public Incident Form (QR Code)` (Menampilkan link & QR Code siap cetak untuk area kerja).
+    - `Prosedur Pelaporan Incident (SOP)` (Modal panduan alur resmi & Incident Level Matrix).
+    - `Export Data (CSV / Excel)`.
+
+- **Kolom Default Tabel:**
+  | Kolom | Keterangan |
+  | :--- | :--- |
+  | `EVENT DATE` | Format `MM/DD/YY` atau `DD MMM YYYY` (sortable) |
+  | `EVENT NUMBER` | Klik untuk buka detail/edit. Format baru **`IN-XXXXXX`** (6 karakter/digit random unik, contoh: `IN-482915`, otomatis dicek keunikannya di DB). Data lama tetap tampil tanpa error. |
+  | `AREA / FACILITY` | Nama Proyek / Divisi / Area kerja |
+  | `TITLE` | Judul singkat kejadian |
+  | `CATEGORY` | Injury/Illness, Property Damage, Process Loss, Spills/Environment, Near Miss/HIPO, Vital Behaviour, Security |
+  | `LOCATION` | Lokasi spesifik kejadian di site |
+  | `REPORTED BY` | Nama Pelapor, Proyek/Dept, Badge ID |
+
+- **Kolom Opsional (via *Add/Remove Columns*):**
+  - `Incident Level (L1–L5)` & `Consequence`
+  - `Status` (`Open` / `In Investigation` / `Pending Approval` / `Closed`)
+  - `Event Time (HH:MM)`
+  - `Is Vital Behavior Violation?`
+  - `Korban & Area Aman?` (Indikator checklist tahap 1 & 2)
+  - `Investigation Method` (`ICAM` / `5-Why` / `Fishbone` / `FTA` / `Gap`)
+  - `Total Approximate Cost` (system generated)
+
+### 2.2 Migrasi Tampilan Risk Management Hub (`/modules/risk-assesment/`)
+- Menyelaraskan header, tipografi, warna kartu, tombol `+ Create New` (monochrome `#0f172a` menggantikan tombol hijau lama), serta responsivitas grid 6 metodologi (*HIRADC, IBAPR, JHA, JSA, BowTie, HAZOP*) agar serasi dengan keseluruhan **HSE Management System**.
+
+---
+
+## 3. Penomoran Otomatis (`IN-XXXXXX`)
+
+- **Format:** `IN-` diikuti 6 digit angka acak kriptografis (`random_int(100000, 999999)`), misalnya `IN-739204`.
+- **Uniqueness Guard:** Sebelum insert, sistem melakukan pengecekan `SELECT 1 FROM insiden WHERE nomor_laporan = ?` (retry otomatis jika terjadi kolisi).
+- **Backward Compatibility:** Nomor laporan historis (mis. `INC/08/2026/001`) tetap dipertahankan apa adanya dan terintegrasi penuh dengan **Lagging Indicator Pyramid** (`modules/indicator/lagging.php`).
+
+---
+
+## 4. Form Input, Edit & Save to PDF (Mirip `Hazard Report`)
+
+### 4.1 Form Input & Edit Internal (`/modules/event-notification/input.php` & `edit.php`)
+Menggunakan layout bersih bergaya `Hazard Report` dengan navigasi **Stepper / Section Tabs** yang jelas sehingga tidak membanjiri user dalam satu halaman panjang:
+
+1. **Bagian A — Informasi Kejadian (Event Notification)**
+   - Event Number (`IN-XXXXXX` auto), Event Date & Time, Area/Facility (Proyek), Location & Detail Lokasi, Shift, Cuaca.
+   - Title, Category, Sub-Category, Type (*Near Miss / Incident / Accident / Vital Behaviour*), Energy Source, Klasifikasi **Incident Level Matrix (Level 1–5)** otomatis menghitung tingkat keparahan & SLA.
+   - Deskripsi Kronologi Kejadian + Upload Foto/Bukti (drag-and-drop & preview).
+   - Data Korban/Aset (opsional jika Injury/Property Damage) + Body Part selector interaktif.
+
+2. **Bagian B — Tanggap Darurat Awal (Checklist Wajib Tahap 1 & 2)**
+   - **1. Apakah Korban Sudah Diamankan?**
+     - Pilihan: `Ya — Sudah Diamankan` / `Tidak Ada Korban` / `Belum (Darurat!)`
+     - Detail tindakan medis/evakuasi (P3K, Klinik Site, Rujuk RS), waktu pengamanan, penanggung jawab.
+   - **2. Apakah Area Kejadian Sudah Diamankan?**
+     - Pilihan: `Ya — Area Aman & Disterilkan` / `Belum (Perlu Isolasi Segera)`
+     - Checklist pengamanan TKP: Barikade/Safety Line terpasang, Sumber energi diisolasi (LOTO), Bukti fisik difoto sebelum dipindahkan, Lingkungan/tumpahan dikendalikan.
+
+3. **Bagian C — Pembentukan Tim Investigasi (Tahap 3)**
+   - Tabel/kartu dinamis untuk menyusun **Tim Investigasi** dengan 5 peran standar wajib:
+     1. **Supervisor** (Pengawas Langsung Area)
+     2. **Manager** (Site / Project / Department Manager)
+     3. **Ahli K3 / Investigator** (Lead Investigator)
+     4. **Perwakilan Karyawan / Saksi** (Witness / P2K3)
+     5. **Orang Yang Terlibat** (Involved Person / Operator / Korban)
+   - Auto-suggest dari master karyawan HRIS (`karyawan_baru`) + opsi input manual (Kontraktor/Subkon), lengkap dengan Nomor Badge, Jabatan, dan Peran Investigasi.
+
+4. **Bagian D — Investigasi Terstruktur & Model Efek Domino (Tahap 4)**
+   - **Pilih & Isi Pendekatan Terstruktur (bisa memilih 1 atau beberapa metode sekaligus):**
+     - **Fishbone (Ishikawa Diagram — 6M):** *Man, Machine, Method, Material, Measurement, Mother Nature/Environment* (dengan visualisasi diagram tulang ikan interaktif).
+     - **5-Why Analysis:** Rantai dinamis *Why 1 → Why 2 → Why 3 → Why 4 → Why 5* hingga menyentuh akar masalah sistemik.
+     - **ICAM:** *Individual/Team Actions*, *Task/Environmental Conditions*, *Absent/Failed Defences*, *Organizational Factors*.
+     - **Gap Analysis:** Tabel perbandingan *Standar/SOP Seharusnya* vs *Kondisi Aktual di Lapangan* vs *Gap/Penyimpangan*.
+     - **Fault Tree Analysis (FTA):** Pemetaan *Top Event* → *Intermediate Events* (Gerbang `AND` / `OR`) → *Basic Root Events*.
+     - **CAPA (Corrective & Preventive Action):** Tabel tindakan perbaikan (Short-term Containment, Corrective Action, Preventive/Systemic Action), PIC, Target Date, Status, dan sinkronisasi otomatis ke **My Open Actions**.
+   - **Model Efek Domino (*Bird & Germain's Loss Causation Model*) — Visual 5 Blok Domino Interaktif:**
+     ```
+     [1. Penyebab Sumber]  ──►  [2. Penyebab Dasar]   ──►  [3. Penyebab Langsung] ──►  [4. Insiden]         ──►  [5. Kerugian]
+     (Lack of Control /         (Underlying Causes)        (Immediate Causes)          (Kontak Energi/Bahan)     (Loss Impact)
+      Komitmen Manajemen)
+     • Program K3               • Faktor Manusia           • Tindakan Tidak Standar    • Kontak Energi           • Manusia (Cedera/FT)
+     • Standar / SOP            • Faktor Pekerjaan         • Kondisi Tidak Standar     • Kontak Bahan/Kimia      • Harta / Aset (Biaya)
+     • Pemenuhan Standar                                                                                         • Proses Bisnis (Downtime)
+     ```
+     Setiap blok domino dapat diklik/diisi terstruktur sehingga auditor & manajemen langsung melihat benang merah dari **Kerugian** mundur sampai ke **Komitmen Manajemen (Root Cause)**.
+
+5. **Bagian E — Penanganan Pihak Eksternal (Tahap 5)**
+   - Toggle: *"Apakah melibatkan / berpotensi melibatkan Pihak Eksternal?"*
+   - Daftar pihak eksternal terkait: **Hukum / Kepolisian**, **Disnaker / Pengawas Ketenagakerjaan**, **ESDM / KTT**, **Masyarakat / Tokoh Desa**, **Klien / Owner**, **Asuransi / Rumah Sakit**, **Media**.
+   - Pencatatan: *Spokesperson Resmi*, *Ringkasan Koordinasi / Holding Statement*, *Nomor Surat / Berita Acara*, *Status Penanganan*, dan *Lampiran Dokumen Legal*.
+
+6. **Bagian F — Approval & Save to PDF**
+   - Workflow persetujuan berjenjang: *Prepared by (Investigator/HSE)* → *Reviewed by (HSE Manager)* → *Approved by (Site/Project Manager)*.
+   - Tombol **`Save to PDF`** (`export_pdf.php`): Menghasilkan dokumen PDF resmi ber-kop PT. Teras Teknik Perdana / TERAS360 yang memuat seluruh informasi kejadian, checklist pengamanan korban & area, susunan tim investigasi, diagram/tabel Efek Domino, hasil analisis terstruktur, CAPA, log pihak eksternal, foto dokumentasi, dan kolom tanda tangan digital.
+
+---
+
+## 5. Form Public Incident Report (`/modules/event-notification/public_report.php`)
+
+Dirancang menyerupai **`Report New Hazard`** (`http://k3.localhost/modules/hazard/input`) — tanpa login, mobile-first, dan dapat diakses lewat scan QR Code di lapangan:
+
+- **Fitur Utama:**
+  - Header bersih TERAS360 HSE + banner darurat (*"Jika kondisi mengancam jiwa, segera hubungi Emergency Response Team & amankan korban terlebih dahulu"*).
+  - Pilihan **Area / Proyek**, **Lokasi Spesifik**, **Tanggal & Jam Kejadian**, **Kategori Kejadian**.
+  - **Quick Safety Check (2 Toggle Wajib):**
+    1. *Apakah Korban Sudah Diamankan?* (Ya / Tidak Ada Korban / Butuh Bantuan Segera)
+    2. *Apakah Area Kejadian Sudah Diamankan?* (Ya / Belum)
+  - Judul Kejadian & Kronologi Singkat + Upload Foto langsung dari kamera ponsel (maks. 3 foto, kompresi otomatis di client).
+  - Identitas Pelapor (Nama, Nomor HP/WA, Perusahaan/Kontraktor, opsional Badge).
+  - **Submit:** Menerbitkan nomor **`IN-XXXXXX`**, menampilkan halaman konfirmasi sukses (bisa screenshot / unduh ringkasan PDF), dan langsung memicu notifikasi real-time ke Tim HSE & Supervisor proyek terkait.
+
+---
+
+## 6. Perbaikan Alur Communication & Eskalasi
+
+Saat ini file `api/komunikasi.php` belum terintegrasi mulus dengan UI maupun notifikasi. Perbaikan mencakup:
+
+1. **Incident Communication Hub (Tab Komunikasi pada Detail/Edit Insiden):**
+   - Thread komunikasi kronologis (chat/log resmi antar Pelapor, Supervisor, Tim Investigasi, HSE Manager, Site Manager).
+   - Dukungan **Kategori Pesan**: `Update Lapangan`, `Arahan Manajemen`, `Koordinasi Investigasi`, `Koordinasi Eksternal`.
+   - Dukungan lampiran file/foto bukti tindak lanjut.
+2. **Automated Notification & Escalation Engine:**
+   - Saat **Event Notification baru** masuk (baik dari internal maupun Public Form) → otomatis mengirim notifikasi ke tabel `notifications` TERAS360 untuk:
+     - **Level 1–2:** HSE Officer & Supervisor Proyek
+     - **Level 3:** + Site Manager & HSE Manager
+     - **Level 4–5 (Major / Catastrophic / HIPO):** + Corporate HSE Manager & Top Management (dengan tanda `URGENT` merah)
+   - Saat **Status berubah** (*Open → In Investigation → Pending Approval → Closed*) atau **CAPA di-assign** → notifikasi otomatis ke PIC terkait.
+   - Tombol **Salin Ringkasan WhatsApp (1-Click WA Broadcast Template)** yang memformat pesan standar insiden (`IN-XXXXXX`, Lokasi, Level, Status Korban & Area, Kronologi) untuk grup WhatsApp tanggap darurat proyek.
+
+---
+
+## 7. Incident Level Matrix & Prosedur Pelaporan Incident (SOP)
+
+### 7.1 Incident Level Matrix (Standar 5 Tingkat)
+
+| Level | Klasifikasi | Dampak Manusia (K3) | Dampak Aset / Biaya | Dampak Lingkungan | SLA Laporan Awal | SLA Investigasi | Pemimpin Investigasi |
+| :---: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **L1** | **Insignificant** | Near Miss / Tidak ada cedera | < Rp 5 Juta | Tumpahan minor terkendali di area (< 5 L) | ≤ 24 Jam | ≤ 3 Hari | Supervisor + Safetyman |
+| **L2** | **Minor** | First Aid Case (FAC) | Rp 5 – 25 Juta | Tumpahan terbatas, pembersihan internal | ≤ 12 Jam | ≤ 5 Hari | Supervisor + HSE Officer |
+| **L3** | **Moderate** | Medical Treatment (MTI) / Restricted Work (RWI) | Rp 25 – 100 Juta | Pencemaran lokal di dalam batas site | ≤ 4 Jam | ≤ 7 Hari | Site Manager + Ahli K3 |
+| **L4** | **Major** | Lost Time Injury (LTI) / Cacat Permanen / HIPO | Rp 100 – 500 Juta | Pencemaran meluas / lapor instansi | **≤ 1 Jam** | ≤ 14 Hari | Project Manager + HSE Manager |
+| **L5** | **Catastrophic** | Fatality (≥ 1) / Multiple LTI | > Rp 500 Juta | Pencemaran berat / dampak masyarakat | **Segera (< 30 Menit)** | ≤ 14 Hari (Komite) | Direksi + Corporate HSE + Ahli K3 |
+
+### 7.2 Prosedur Pelaporan Incident (SOP Interaktif dalam Aplikasi)
+Tersedia sebagai modal/halaman panduan visual yang terhubung dari menu Pengaturan (`🔧`) dan Public Form:
+
+```mermaid
+flowchart LR
+    A["1. Tanggap Darurat<br/>Amankan Korban & Area TKP"] --> B["2. Pelaporan Awal<br/>Input Internal / Scan QR Public<br/>Terbit No. IN-XXXXXX"]
+    B --> C["3. Klasifikasi & Eskalasi<br/>Cek Incident Level Matrix L1-L5<br/>Notifikasi & WA Broadcast"]
+    C --> D["4. Bentuk Tim Investigasi<br/>Supervisor, Manager, Ahli K3,<br/>Saksi/Perwakilan, Terlibat"]
+    D --> E["5. Analisis Akar Masalah<br/>6 Metode + Model Efek Domino<br/>& Penanganan Pihak Eksternal"]
+    E --> F["6. CAPA, Approval & PDF<br/>Verifikasi Efektivitas & Close"]
+```
+
+---
+
+## 8. Skema Database (Zero Data Loss Migration)
+
+Seluruh data existing di tabel `insiden` tetap aman. Migrasi otomatis (`modules/event-notification/setup.php` — idempotent `CREATE TABLE IF NOT EXISTS` & `ALTER TABLE` aman) akan menambahkan:
+
+1. **Penambahan kolom pada tabel `insiden`** (jika belum ada):
+   - `victim_secured_status` (`ENUM('Ya','Tidak Ada Korban','Belum')`), `victim_secured_notes` (`TEXT`)
+   - `scene_secured_status` (`ENUM('Ya','Belum')`), `scene_secured_checklist` (`JSON` / `TEXT`)
+   - `incident_level` (`TINYINT` 1–5), `is_vital_behavior` (`TINYINT(1)`), `is_demr_category` (`TINYINT(1)`)
+   - `reported_by_name` (`VARCHAR(160)`), `reported_by_contact` (`VARCHAR(60)`), `source_channel` (`ENUM('Internal','Public QR')`)
+   - `domino_json` (`LONGTEXT` — menyimpan 5 blok Model Efek Domino)
+   - `structured_analysis_json` (`LONGTEXT` — menyimpan hasil Fishbone, 5-Why, ICAM, Gap Analysis, FTA)
+   - `external_handling_json` (`LONGTEXT` — menyimpan data pihak eksternal, spokesperson, dokumen)
+2. **Tabel Relasi Baru:**
+   - `insiden_investigation_team` (`id`, `id_insiden`, `role_type` [Supervisor / Manager / Ahli K3 / Perwakilan Karyawan / Orang Terlibat], `member_name`, `badge_no`, `position`, `department`, `notes`)
+   - `insiden_communications` (`id`, `id_insiden`, `user_id`, `sender_name`, `sender_role`, `channel_type` [Internal / Escalation / External], `message`, `attachment_path`, `created_at`)
+   - `insiden_capa_actions` (`id`, `id_insiden`, `action_type` [Containment / Corrective / Preventive], `domino_link`, `description`, `pic_name`, `due_date`, `status` [Open / In Progress / Closed], `evidence_note`, `completed_at`)
+
+---
+
+## 9. Rencana Implementasi Bertahap
+
+| Fase | Ruang Lingkup | File Utama |
+| :--- | :--- | :--- |
+| **Fase 1** | Database auto-migration (`setup.php`) + Generator Nomor `IN-XXXXXX` + Perbaikan API (`api/komunikasi.php`, `api/save_incident.php`, `api/capa.php`) | `modules/event-notification/setup.php`, `api/*.php` |
+| **Fase 2** | Redesign **Event Notification List** standar `Hazard Report` (View Selector, Quick Filter, Add/Remove Columns, Advanced View, SOP & Incident Level Matrix Modal) | `modules/event-notification/index.php` |
+| **Fase 3** | Redesign **Form Input & Edit** (5 Tahap Investigasi, Tim Investigasi, 6 Metodologi Terstruktur, Visual Efek Domino, Penanganan Eksternal, Communication Thread) + **Save to PDF** | `modules/event-notification/input.php`, `edit.php`, `export_pdf.php` |
+| **Fase 4** | **Public Incident Report Form (QR)** mobile-first tanpa login + Pembaruan visual **Risk Management Hub** & link Sidebar | `modules/event-notification/public_report.php`, `modules/risk-assesment/index.php`, `includes/sidebar.php` |
+
+---
+
+> [!IMPORTANT]
+> Silakan tinjau PRD ini. Jika sudah sesuai (atau ada tambahan kolom/aturan khusus), klik **Proceed** atau berikan komentar agar saya langsung mengeksekusi implementasinya secara bertahap dan terverifikasi.
