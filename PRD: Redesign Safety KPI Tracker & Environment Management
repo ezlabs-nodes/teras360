@@ -1,0 +1,105 @@
+# PRD: Redesign Safety KPI (Field Activity & Self-Evaluation) + Modul Baru Environment Management — TERAS360 Dashboard K3
+
+**Versi:** 1.0  
+**Tanggal:** 28 November 2026  
+**Target Sistem:** Dashboard K3 (`http://k3.localhost/`)  
+**Ruang Lingkup:**
+1. Redesign Modul **Safety KPI** (`http://k3.localhost/modules/kpi/`)
+2. Pembuatan Modul Baru **Environment Management** (`http://k3.localhost/modules/environment/`)
+
+---
+
+## 1. Latar Belakang & Tujuan
+
+### 1.1 Modul Safety KPI (`modules/kpi/`)
+Saat ini modul KPI masih menggunakan pendekatan *target & bobot persentase kaku* (`Target: 100%`, `weight_percent`). Kebutuhan aktual di lapangan adalah **evaluasi keaktifan nyata** personel K3 (**Safety Officer, Safetyman, Safety Supervisor**, serta **Self-Evaluation** mandiri) di setiap proyek, tanpa terikat target kaku.
+
+### 1.2 Modul Baru Environment Management (`modules/environment/`)
+Program **Pemilahan Sampah Domestik (10%)** membutuhkan wadah pencatatan lingkungan tersendiri yang terstruktur. Sekaligus, manajemen membutuhkan **Environmental Sustainability KPI Dashboard** (Energy, Waste, Water, Material Flow, Social Footprint, dan Sustainability Manager) sebagaimana referensi desain yang diberikan.
+
+---
+
+## 2. Bagian A — Redesign Modul Safety KPI (`http://k3.localhost/modules/kpi/`)
+
+### 2.1 Konsep Evaluasi Baru (Tanpa Target Kaku)
+- Menghapus seluruh label/kolom **Target (%)**, **Weight (%)**, dan status *Under/Over Target*.
+- Fokus 100% pada **Keaktifan Aktual Lapangan (*Field Activity Count*)** per personel dan per proyek pada **5 Program Inti K3**:
+  1. **Hazard Report** — Jumlah laporan bahaya yang dilaporkan personel (auto-sync dari `hazard_report` / `hazards`).
+  2. **HSE Meeting + On Job Training (OJT)** — Gabungan sesi HSE Meeting, Toolbox/Pre-Shift, dan OJT yang difasilitasi/dilaporkan (auto-sync dari `kpi_evidence`).
+  3. **HSE Inspection** — Jumlah inspeksi periodik, manajemen, & pre-use inspection (auto-sync dari `kpi_inspections` + `preuse_general_inspections`).
+  4. **Safety Interaction** — Jumlah interaksi keselamatan kerja di lapangan (auto-sync dari `kpi_evidence` / `safety_interactions`).
+  5. **Program Pemilahan Sampah Domestik (10%)** — Jumlah aktivitas / laporan pemilahan sampah domestik & persentase capaian pemilahan (auto-sync langsung dari modul baru **Environment Management → Waste Management**).
+
+### 2.2 Filter & Mode Evaluasi
+- **Filter Area / Proyek:** Menggunakan format standar `PT. Teras Teknik Perdana\Indonesia\<Kota>\<Proyek>` (mendukung *All Projects* bagi HSE Corporate/Manager/Superadmin, dan terkunci otomatis per site bagi personel proyek).
+- **Filter Periode:** Pilihan **Bulanan (`YYYY-MM`)**, **Tahunan (`2026`)**, atau **All Time**.
+- **Mode Evaluasi:**
+  - **Team Evaluation View** *(untuk HSE Supervisor / Manager / Corporate)*: Melihat seluruh Safetyman, Safety Officer, & Safety Supervisor di proyek terpilih, dilengkapi pencarian nama & pengurutan kolom.
+  - **Self-Evaluation View** *(untuk semua personel K3)*: Menampilkan kartu ringkasan aktivitas pribadi pada 5 program + kolom **Catatan Self-Evaluation / Refleksi Lapangan** (tersimpan ke database `kpi_self_evaluations`).
+
+### 2.3 Dua Mode Tampilan (Default Table + Advanced View 3D)
+1. **Default View — Interactive Activity Table:**
+   - Tabel bersih & responsif dengan kolom:
+     `No` | `Personel & Jabatan` | `Proyek / Site` | `Hazard Report` | `HSE Meeting + OJT` | `HSE Inspection` | `Safety Interaction` | `Pemilahan Sampah (10%)` | `Total Aktivitas` | `Aksi (Detail / Self-Eval)`
+   - Dilengkapi baris **Total Proyek**, tombol **Export CSV/Excel**, serta klik baris untuk melihat rincian log aktivitas personel tersebut.
+2. **Advanced View (3D Data Visualization):**
+   - Switch button **`Table View` | `Advanced View (3D)`** di header kanan.
+   - Menggunakan **Plotly.js (WebGL 3D Surface / 3D Bar & Scatter)** sehingga pengguna dapat memutar (*orbit rotate*), *zoom*, dan *hover* data 3D:
+     - **Sumbu X:** Personel Safety / Proyek
+     - **Sumbu Y:** 5 Program Aktivitas K3 (*Hazard, Meeting+OJT, Inspection, Interaction, Waste 10%*)
+     - **Sumbu Z:** Jumlah Aktivitas Aktual
+   - Dilengkapi opsi tampilan **3D Bar Matrix** dan **3D Activity Landscape** dengan tombol *Reset Camera*.
+
+---
+
+## 3. Bagian B — Modul Baru: Environment Management (`http://k3.localhost/modules/environment/`)
+
+### 3.1 Penempatan Menu di Sidebar Dashboard K3
+Menambahkan menu baru di `dashboard-k3/includes/sidebar.php` dengan ikon **Leaf / Environment**:
+- **Environment Management**
+  - `Sustainability Dashboard` (`modules/environment/index.php`)
+  - `Waste Management (Pemilahan 10%)` (`modules/environment/index.php?tab=waste`)
+  - `Energy & Water Monitoring` (`modules/environment/index.php?tab=energy_water`)
+  - `Social Footprint & ESG` (`modules/environment/index.php?tab=social`)
+
+### 3.2 6 Komponen Environmental Sustainability KPI (Sesuai Referensi Gambar)
+Seluruh 6 panel dirancang dengan gaya modern Clean TERAS360 (mendukung **Default Table View** untuk input/CRUD data real & **Dashboard / Advanced 3D View** untuk visualisasi grafik):
+
+| # | Panel / Metrik | Visualisasi Grafik | Parameter Data (CRUD per Proyek & Periode) |
+| :-: | :--- | :--- | :--- |
+| **1** | **Energy (kWh)** | Bar Chart 3 Kategori | `Scope 1` (BBM/Genset/Alat), `Scope 2` (Listrik PLN/Site), `Scope 3` (Transportasi/Supply Chain) |
+| **2** | **Waste (tons / kg)** | Bar Chart 5 Kategori + Indikator Pemilahan 10% | `Miscellaneous`, `General`, `Recyclable`, `Clinical`, `Hazardous / Waste` + **Checklist & Volume Pemilahan Sampah Domestik (10%)** yang terhubung langsung ke Safety KPI! |
+| **3** | **Water (Kilolitres)** | Bar Chart 4 Kategori | `Total Withdrawals`, `Total Recycling`, `Total Discharges`, `Total Refuses` |
+| **4** | **Material Flow** | Doughnut Chart Rasio (%) | `Inflow (%)` vs `Outflow (%)` (volume material masuk vs keluar/sisa/daur ulang) |
+| **5** | **Social Footprint** | Tabel Inisiatif & Biaya | `Type of Community Development` (*Sustainable Enterprise, Knowledge & Skills, Infrastructure, Human Resource Development*) & `Initiative Cost (Rp)` |
+| **6** | **Sustainability Manager** | Doughnut Chart Proporsi ESG | Proporsi program `Environment`, `Labour Practices`, dan `Social` |
+
+### 3.3 Mode Tampilan Environment Management
+- **Default View: Table & Data Management** — Memudahkan tim HSE/Site untuk melakukan **Tambah, Edit, Hapus** data Waste (termasuk input laporan Pemilahan Sampah Domestik 10% per Safety Officer), Energy, Water, Material Flow, dan Social Footprint.
+- **Dashboard & Advanced 3D View** — Menampilkan seluruh 6 panel grafik interaktif (2D Chart.js sesuai gambar referensi + toggle **3D Interactive View** via Plotly WebGL untuk presentasi manajemen).
+
+---
+
+## 4. Rancangan Database Baru (`terasmyi_dashboard_k3`)
+
+Dibuat melalui skrip migrasi *idempotent* (`dashboard-k3/modules/environment/setup.php`):
+1. **`kpi_self_evaluations`**: `id`, `user_id`, `id_proyek`, `periode` (`YYYY-MM`), `self_rating` (1–5), `highlights`, `challenges`, `next_plan`, `supervisor_note`, `updated_at`.
+2. **`env_waste_records`**: `id`, `id_proyek`, `user_id`, `reported_by`, `record_date`, `periode`, `waste_category` (`Miscellaneous`, `General`, `Recyclable`, `Clinical`, `Waste`), `weight_kg`, `is_domestic_segregated` (0/1), `segregation_pct`, `notes`, `created_at`.
+3. **`env_energy_water_logs`**: `id`, `id_proyek`, `periode`, `energy_scope1`, `energy_scope2`, `energy_scope3`, `water_withdrawals`, `water_recycling`, `water_discharges`, `water_refuses`, `material_inflow_pct`, `material_outflow_pct`, `esg_env_pct`, `esg_labour_pct`, `esg_social_pct`, `updated_by`, `updated_at`.
+4. **`env_social_footprint`**: `id`, `id_proyek`, `periode`, `program_type`, `description`, `initiative_cost`, `created_by`, `created_at`.
+
+---
+
+## 5. Daftar File yang Akan Dibuat / Diperbarui
+- `[NEW]` `dashboard-k3/modules/environment/setup.php` — Migrasi 4 tabel di atas + seeding data awal realistis agar grafik langsung tampil informatif.
+- `[NEW]` `dashboard-k3/modules/environment/api.php` — Endpoint CRUD JSON (CSRF + RBAC) untuk Waste, Energy/Water/Material/ESG, dan Social Footprint.
+- `[NEW]` `dashboard-k3/modules/environment/index.php` — Halaman lengkap Environment Management (Default Table + 6-Panel Sustainability Dashboard + Advanced 3D View).
+- `[MODIFY]` `dashboard-k3/modules/kpi/index.php` + `[NEW]` `dashboard-k3/modules/kpi/api/field_activity.php` — Rebuild Safety KPI Tracker (Tanpa Target, 5 Program Inti termasuk Pemilahan Sampah 10%, Self-Evaluation, Default Table + Advanced 3D View).
+- `[MODIFY]` `dashboard-k3/includes/sidebar.php` — Menambahkan menu **Environment Management** di sidebar Dashboard K3.
+
+---
+
+## 6. Pertanyaan Konfirmasi
+1. Untuk **Advanced View 3D**, apakah Anda setuju menggunakan **Plotly.js WebGL 3D** (bisa diputar 360°, di-zoom, dan di-hover untuk detail angka)?
+2. Pada **Program Pemilahan Sampah Domestik (10%)**, apakah cukup dicatat berdasarkan **jumlah kegiatan/laporan pemilahan & berat (kg)** yang diinput di *Environment Management* lalu otomatis tampil pada kolom ke-5 di *Safety KPI*?
+3. Silakan klik **Proceed** / konfirmasi jika PRD ini sudah sesuai agar saya langsung mulai implementasi.
